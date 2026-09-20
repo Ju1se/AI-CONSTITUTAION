@@ -1,0 +1,17 @@
+# Mock targets allowed in tests (prefix match). I/O boundaries only — never a module this repository owns.
+# Protected by H5: widen only on a policy/ branch.
+requests.
+httpx.
+urllib.
+socket.
+subprocess.
+time.
+datetime.
+random.
+secrets.
+os.environ
+builtins.open
+pathlib.Path.open
+sqlite3.connect
+anthropic.
+openai.
