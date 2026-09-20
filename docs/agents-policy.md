@@ -1,8 +1,8 @@
 # Agents policy — design, rationale, enforcement
 
-Status: v0.4 · 2026-09-20 · companion to `/AGENTS.md` · responds to the independent review of v0.3 (`docs/audits/agents-kit-v0.3-review.md`).
+Status: legislative revision · 2026-09-20 · companion to `/AGENTS.md`. Enforcement, tool-loading and historical sections are retained as prior-version descriptions and require independent reassessment; this revision does not certify implementation or outcomes.
 
-This document is for humans and for the E-series evaluation. Agents never load it; the operative file is `AGENTS.md` (134 lines, 14.0 KB). Everything here explains, justifies, parameterizes or enforces a line in that file. If a sentence here would change an agent's behavior, it belongs in `AGENTS.md`; if a sentence in `AGENTS.md` only explains, it belongs here.
+Sections 1–3, 5 and 6 explain the current legislation and its evaluation principles. `AGENTS.md` contains operative duties and `policy.mk` their values; this document creates no additional permissions. Other sections are retained without re-verification in this legislative-only revision.
 
 Contents: 1 Principle · 2 Assumptions · 3 Clauses §1–§7 · 4 Checks on the checkers · 5 Metrics and baselines · 6 Parameters · 7 Enforcement (7.5 what is not yet checked, 7.6 what the gate does not claim) · 8 Loading per tool · 9 Maintenance · 10 Audit response
 
@@ -10,119 +10,106 @@ Contents: 1 Principle · 2 Assumptions · 3 Clauses §1–§7 · 4 Checks on the
 
 ## 1. Principle
 
-The rules assume the knave: an agent takes the shortest path to whatever counts as done. They do not ask it not to. They move "done" so that the shortest path runs through the behavior the repository needs. Each clause has four parts:
+The legislation protects authority and truthful evidence while leaving a proportionate path to complete authorized work. `AGENTS.md` states operative duties; `policy.mk` supplies their parameter values. This explanation creates no additional permission. A result supports only what its stated evidence establishes; it cannot supply a missing authorization or change the meaning of an earlier result.
 
-- **RULE** — what is binding (in `AGENTS.md`).
-- **CHEAPEST PATH** — the least-effort legal route, and why the evasion costs more (one "Safe path" line in `AGENTS.md`; the argument is here).
-- **CHECK** — the mechanical gate that refuses completion without it (specified here; implemented in `scripts/gate_checks.py`, the hook, and CI).
-- **METRIC** — what is measured afterward (here).
+The separation-of-powers analogy, including the concern in *Federalist 51* with checking power rather than relying on goodwill, informs the allocation of decisions. It is not evidence that different agent instances have opposed interests. A branch name, a fresh instance or a role label is insufficient: the person designated to approve a disputed acceptance revision must be able to refuse and must be neither its implementer nor its proposer. Tests are fallible evidence of a specification, not an unamendable constitution.
 
-Three facts shape the split between the files. First, both vendors state that instruction files are context, not enforcement: Claude Code says to use a `PreToolUse` hook to block an action regardless of what the model decides, and Codex's review-rule guidance leaves lint and formatting to CI. A rule that exists only as prose is the condition the task-resolution null result measured. Second, both vendors cap what an agent will absorb: Claude Code targets under 200 lines per file; Codex concatenates the global, root and nested `AGENTS.md` files and stops adding at 32 KiB by default. Third — the lesson of both reviews — **the verifier is itself an agent-written artifact and takes the same shortcuts the policy targets**: v0.2 swallowed git errors (`except: pass` in the judiciary), mapped unimplemented checks to exit 0 (`|| true`), and read evidence from the working tree instead of the committed subject. Text did not stop the agent that wrote the checker; an independent instance with a fixed subject and its own fixtures did. So the verifier is protected from the party it constrains (§7), loaded from the trusted branch rather than the candidate, and carries a regression corpus made of both reviews' counterexamples.
+### Authority, interpretation and change
 
-v0.3 did that and was reviewed in turn. The finding was that it had separated the candidate from the verifier but not from the *tree the verifier reads*: `git archive` obeyed a candidate `.gitattributes`, pytest read a candidate `addopts`, ruff read a candidate `pyproject.toml`, a candidate `conftest.py` rewrote the gate's own results, and the check meant to stop verifier sabotage ran the candidate's own corpus. Each fix had grown its next exemption: the `# boundary:` note invented so the verifier's crash barrier could be legal laundered every marker in the denylist, including a skip on a failing test. v0.4 therefore adds a fourth identity to the trust model — the evidence tree — and makes the rule that no input to the judgment may come from the party being judged (§7.1).
+Hard rules protect the allocation of authority and the integrity of evidence. Ordinary rules govern work within that allocation. Task instructions determine the goal and scope. Explicit task-owner instructions take precedence as stated in `AGENTS.md`; a request to finish, however, does not implicitly amend a rule or authorize an exception. An explicit override is recorded with its clause, scope, reason and duration. An ambiguous conflict pauses the dependent work as `H-CONFLICT`.
 
-The two-price problem the policy addresses: generation cost fell to zero and removal cost did not move. The creation price cannot be restored, so the mechanisms make removal cheap (§5) and couple the two prices (§4). Stigmergy is the analogy, with the audit's limit attached: pheromone evaporation is safe because re-laying a trail is cheap; code and published results are not, so expiry triggers re-evaluation, not unconditional deletion.
+Three decisions must remain distinguishable:
 
-"Compliance is cheaper" is a design target, not a proven property of any executor. Different runtimes respond to context length, stop conditions, tool-call counts or wall-clock time rather than to a computed future cost, and a current instance need not internalize a later instance's work. The policy therefore lowers the friction of the legal path, mechanically blocks the known illegal paths, and measures the rest (§5).
+- **Interpretation** explains an existing rule and its application; it cannot create a new exception.
+- **Exception** uses authority already granted by a clause. Prior written authorization names the clause, exact scope, reason, conditions, effective point and expiry or terminating event. Acceptance revisions also need the independent approval in §3. Expiry is not self-renewal.
+- **Amendment** changes a general rule. It uses a `policy/` change, identifies the protected interest and alternatives, and specifies adjacent allowed and refused cases, compliance burden, effective point, pending-work treatment and any trial review or fallback. Its author cannot certify the amendment.
+
+An amendment takes effect on `main` at its recorded effective commit or later named transition. Existing decisions keep their original rule version and outcome. A reconsideration is a new decision, not an erasure of the old one. If a required mechanism rejects an authorized transition, retain that result and refer the mismatch to the designated authority. The new permission does not authorize bypassing the mechanism or relabelling FAIL, ERROR or NOT_RUN as PASS.
+
+Rules bind unless expressly advisory. Creating a tool does not activate an advisory policy. Activation needs an explicit amendment; a trial names its scope, end or review point, benefit and burden measures, and fallback. Repeated similar exceptions are evidence that the general rule needs reconsideration, not a permanent substitute for amendment.
 
 ## 2. Assumptions
 
-- One change = one branch, merged as one unit (PR). The **change type is the `TYPE:` line of the committed record** `docs/changes/<type>-<slug>.md`; the filename and the branch prefix must agree with it. The record, not the branch, is the identity that survives merging (audit F09).
-- Source under `src/`, tests under `tests/`. Python tooling is assumed in the shipped `Makefile` (`pytest`, `ruff`, PyPI); the check ids are the contract, the recipes are the adapter. The dependency check is PyPI-only; other manifests are recognized by name but not verified.
-- The trusted branch is `main` (`MAIN` in `policy.mk`). The verifier and the policy in force are always loaded from it (`VERIFIER_REF`), never from the candidate.
-- Two profiles: `enforced` (default) and `advisory`. `REQUIRED_CHECKS_<PROFILE>` in `policy.mk` lists the checks that must PASS; everything else runs and is reported. Unimplemented checks report NOT_RUN and are in neither required list. The advisory profile is for watching a mechanism before it binds and never sets `merge_eligible`; the profile comes from the command line only, never from the environment.
-- The **evidence tree** — the export the gate tests, and the configuration the tools inside it read — is an input to the judgment, so it comes from the commit and from the verifier, never from files the candidate wrote to steer them.
+- A change is one branch merged as one unit. Its committed record names `TYPE:`; filename and branch prefix agree. Records remain available after a branch disappears. `docs/changes/` is allowed in every type.
+- The ordinary layout places source in `src/` and acceptance tests in `tests/`; the protected set is authoritative in `policy.mk`. A permitted acceptance revision does not waive path protection or authorize an unrelated change type.
+- The task owner states scope, designates independent decision makers, answers blocked questions and grants only explicit authorizations. The implementer proposes and performs work; the acceptance approver decides the exact requested revision. Legislative authors propose general rules and do not adjudicate their own amendments.
+- Independence is a requirement on the decision, not a claim that role separation eliminates shared bias. A second instance selected by a proposer has no automatic approval authority. The owner must designate the approver, who may refuse.
+- The applicable policy comes from `main` and the recorded effective transition. Pending work does not silently adopt a convenient rule version; the amendment states its scope. Old evidence remains attributable to the policy and specification under which it was produced.
+- The enforced profile requires PASS on its required checks. An advisory profile does not authorize a merge. These result conditions coexist with substantive specification and authorization duties; no profile makes an unfulfilled binding duty optional.
 
 ## 3. Clauses
 
 ### §1 Definition of done — single-subject rule
 
-*Analog: the single-subject rule in state constitutions, which stops riders.* Here it stops a test edit from riding inside a feature, or a threshold change inside a fix.
+The single-subject rule separates an implementation decision from a change in the rules used to judge it. `DONE` means the authorized specification is met, binding duties are fulfilled, applicable acceptance is resolved, and every required merge check is PASS. Report a role's completed work separately from decisions still owed by another role. A passing check does not certify unexamined behavior, and an unfinished external decision is not a completed task.
 
-CHEAPEST PATH. Pick the type first (it fixes what you may touch), write the test before the code (§3 makes this the cheap route), write each record line at the moment of the decision. "Then stop" is the anti-scope-creep lever: unrequested work is a debit.
+A change normally has one type and adds one record. Corrections to older records preserve the original decision and explain the correction. A `policy/` change touches the protected set plus its record. A `refactor/` changes no acceptance. An ordinary test correction uses `test/`; an independently approved specification migration may coordinate behavior and its exact acceptance revisions within a `feature/` or `fix/`, with tests committed before implementation and in separate commits. Protected acceptance still requires `policy/`.
 
-CHECK (`type`, `protected_files`). Exactly one record added or modified under `docs/changes/`; `TYPE:` ∈ the seven types, equal to the filename prefix and to the branch prefix when a branch is known. Diff path set ⊆ the type's allowed set. Protected set touched ⇒ type must be `policy`; `policy` touches the protected set only. `renew` diffs contain only `SUNSET` lines (line-wise heuristic; a behavior change on a tagged line is not yet detected — phase 2, audit P08).
+**Adjacent cases:** changing behavior and exactly the acceptance cases approved for a new specification is permitted as that migration. Editing additional failing cases because they obstruct completion is not. This exception prevents branch separation from making a legitimate transition impossible without turning a feature branch into an unrestricted power to rewrite acceptance.
 
-METRIC. Share of changes refused by the type gate; should fall toward zero as splitting becomes cheaper than being refused.
+### §2 Terminal states — BLOCKED preserves the decision
 
-### §2 Terminal states — BLOCKED is the cheapest exit
+`BLOCKED` is a valid, non-punitive filing, not abandonment of the task or a requirement to stop unrelated work. Its three lines identify the dependent scope, the smallest missing decision and its decision maker, and the state of work. Persist it in the change record before handoff. Independent work already within scope may continue.
 
-*Analog: Hirschman's "voice."* A system in which dissent is cheaper than corruption gets dissent instead of corruption.
+The task owner must answer, designate a decision maker, revise scope or explicitly defer. Silence is not consent. Retain the filing and record its disposition; an answer resolves only the scope it names. No failed-code demonstration is required to establish that an authorization, specification or external obligation is missing. A `SPEC-AMBIGUOUS` filing is appropriate when two plausible readings change observable acceptance and no authorized default resolves them, not for every routine implementation choice.
 
-CHEAPEST PATH. Three lines, no code, no test, no review, no penalty. A masked error costs the handler, a test written around it, a `masks` tag whose expiry the agent will meet again, a `WHY:` line, and a guaranteed audit. The round trip (the task owner answers `NEED` and the task returns) is the guard against frivolous filing.
+Error handling must preserve what the caller needs to know: re-raise with context, return a typed failure the caller must match, or log at ERROR with the exception under a complete `masks` sunset tag. The narrow permanent boundary form in `AGENTS.md` is separately permitted when it returns or raises the named typed failure; it does not require a `masks` tag. A complete temporary tag and a permanent boundary authorize only their stated forms, never an unrelated skip, suppression or fallback. Review applies those same exceptions.
 
-The denylist is a list of constructs, not a principle, because a construct list is what a linter can refuse. Two catch-all shapes are sanctioned, both on one line and both in the 100% audit set: the stopgap (`# noqa: BLE001` paired with a complete `masks` tag; a partial tag exempts nothing, audit P09) and the permanent **boundary** (`# noqa: BLE001  # boundary: <typed failure returned>`) for a crash barrier at a process or check edge whose body returns or raises a typed failure. The second shape was added when the v0.3 verifier was held to its own denylist: its per-check crash barrier is exactly such a boundary, and the v0.2 policy had no legal way to write it — a POLICY-GAP filed by the verifier's own author.
+**Adjacent cases:** pausing a behavior decision while completing unrelated, authorized documentation preserves both caution and progress. Choosing an acceptance meaning merely because the owner has not replied does not.
 
-CHECK (`masking_markers`, `masking_ruff`). Diff scan of every added `.py`/`.sh`/`.bash` line anywhere in the tree — `src/`, `tests/`, `scripts/`, `tools/`, a root or `tests/` `conftest.py` — for suppression markers, skip/xfail decorators, any handler followed by `pass`/`continue`/`return`, shell masking, and file-level `# ruff: noqa` headers. Two exemptions and no others: a line carrying a well-formed `SUNSET` tag, and a line matching the boundary shape in full whose handler body is parsed with `ast` and ends every path in a `raise` or a `return` of something other than `None`. A `# boundary:` note anywhere else exempts nothing (audit P0-1). Ruff `E722 BLE001 S110 S112 S113` runs `--isolated` over every source directory present, so the candidate's own ruff configuration does not apply (audit P0-2); ruff absent ⇒ NOT_RUN, which blocks an `enforced` merge rather than passing silently.
+### §3 Evidence — authority over acceptance revisions
 
-METRIC. Error-masking constructs per 1,000 changed lines (reference: +47% in AI-era commits, GitClear 2026). BLOCKED filings per task by TAG. Share of BLOCKED whose `NEED` was already answered in the task — a measure of spec quality, never a sanction.
+H1 prohibits an implementer from unilaterally changing the standard used to judge their work. Existing acceptance includes `tests/`, `scripts/tests/` and every `conftest.py`. The protection is not a declaration that every old assertion is correct. Two revision grounds must be recorded separately:
 
-### §3 Evidence — separation of powers over verification
+1. **Correction:** evidence shows an existing case is inconsistent with the current governing specification.
+2. **Migration:** the owner explicitly authorizes a new specification whose observable behavior changes acceptance.
 
-*Analog: Federalist 51.* The role that writes the code cannot certify it; the role that certifies is not done until it has found something or paid to say it looked.
+Before editing acceptance, the owner designates an approver other than the implementer or revision proposer, with authority to refuse. The `ACCEPTANCE` decision records the decision maker, date, reason, governing specification versions, exact old and new cases, effective transition and retained evidence. It identifies which obligations remain and which are superseded. The approval is specific; it does not authorize weakening neighboring assertions or deciding a broader migration after observing failures.
 
-Definitions. **BLIND** tests are written from the spec and committed before the implementation; the commit is the registered hash. **SEPARATE ROLE** tests are written by a different instance given the spec and public interface, not the diff. **H1** forbids modifying or deleting a test once committed; adding new tests is how BLIND works.
+Ordinary corrections use `test/`. A migration may use the exact `feature/` or `fix/` exception in §1, preserving test-before-implementation commit separation. Protected acceptance requires `policy/`. Existing policy counterexamples remain binding unless the approved decision explicitly supersedes them and identifies their replacement obligations. Preserve old specifications, tests and outcomes in committed history. Approval never converts an earlier failure into a pass; mechanisms that reject the transition must be referred for a separately authorized resolution.
 
-What the gate proves and what it does not (audit F05): the gate proves that no committed test was modified, that no commit touched `src/` and `tests/` together, and that a `feature`/`fix` added at least one test file. It does not prove that the tests were written before the implementation existed somewhere, nor that they fail on the base commit — red-before-green is a separate check, reported NOT_RUN until implemented (phase 2). These are three statements; the record and the metrics keep them apart.
+BLIND means tests are authored from the authorized specification before implementation. A separate-role author receives the specification and public interface rather than the implementation diff. Evidence includes new cases failing on the recorded pre-change base, newly collected cases and a real in-repository call path. Report an import error as an import error rather than as demonstrated behavioral failure. A feature/fix adds a new test file. A missing real-path harness is `NO-HARNESS`; an unapproved acceptance revision pauses as `TEST-DEFECT` or `H-CONFLICT`. Mocks remain limited to the authorized I/O boundaries, never an owned module. The mutation target of 0.70 is advisory; record a measured result or why it was not measured.
 
-CHEAPEST PATH. Test-first from the spec, commit, implement until green. One motion satisfies BLIND, H1 and the added-test rule with no second agent and no waiting. A spec too vague to test is `BLOCKED SPEC-AMBIGUOUS`, not a reason to reach for a mock. A test that looks wrong is `BLOCKED TEST-DEFECT` — three lines against an H1 refusal plus rework.
+**Adjacent cases:** the designated approver authorizes a specific mistaken assertion against an unchanged specification, preserving the old evidence. That is a correction. The implementer replaces the same assertion solely to make their new code pass, without that decision. That is unauthorized. Changing the specification requires the migration route, even when changing the test text would look identical.
 
-CHECK (`export_integrity`, `harness_integrity`, `test_inventory`, `unit_tests`, `red_before_green`, `h1`, `mocks`, hook).
+### §4 PAYGO — an advisory complexity ledger
 
-- `export_integrity`: the path set of the export equals `git ls-tree -r <subject>`. A candidate `.gitattributes export-ignore` cannot delete the frozen tests from the gate's own evidence (audit CR-01).
-- `harness_integrity`: off a `policy` change, no added line may ship an `export-ignore` attribute, a `conftest.py` hook that touches collection or reporting, a `[tool.pytest…]`/`[tool:pytest]`/`[tool.ruff…]` section, an `addopts`/`testpaths`/`python_files` key, or a file-level `# ruff: noqa` (audit CR-01, CR-02, CR-03).
-- `test_inventory`: pytest collects, under the gate's own configuration, at both base and subject. Any id present at base and gone at the subject is a FAIL however it vanished — deletion, `export-ignore`, `--ignore`, a collection hook. A `feature`/`fix` must add at least one *collected* id, which an inert `.py` file does not (audit CR-04).
-- `unit_tests`: the suite runs on the export with `-c <the gate's own ini> --override-ini=addopts=`, so the candidate's pytest configuration is not read (audit CR-02).
-- `red_before_green`: the change's new test files are copied onto a clean export of the base and run; pytest must exit 1 or 2. Exit 0 or 5 means they tested nothing the change did.
-- `h1`: per commit in `base..subject`, no `M`/`D`/`R` in the frozen set — `tests/`, `scripts/tests/`, every `conftest.py`; `refactor` touches no tests; `feature`/`fix` never mix `src/` and `tests/` in one commit.
-- `mocks`: an AST scan of added lines under `tests/` **and** `src/` for `patch`, `patch.object`, `patch.dict`, `monkeypatch.setattr/delattr` and `setattr`, resolving each target through the file's own imports, compared with the allowlist **at the trusted ref**. Resolution fixes both halves of the v0.3 defect: the object form `monkeypatch.setattr(core, "value", …)` is now caught, and `patch.object(requests, "get")` is no longer falsely refused. A target computed at run time is reported unresolved, never silently allowed.
-- Hook: refuses `src/` edits while `tests/` has uncommitted changes, and edits to committed test files off a `test/` branch; a `renew` branch may edit `src/` because that is where a tag lives (audit RT-07); `tests/MOCK_ALLOWLIST` is a policy file (P23).
+The ledger is an observation proposal, not a current merge condition or a source of spendable rights. Its target is net debits minus credits at most 2, with a proposed bank cap of 6. Report available evidence truthfully; an unavailable score is not zero. Tool availability alone does not activate the ledger, and no task must delete unrelated code to meet its target.
 
-METRIC. Unauthorized weakening rate of frozen acceptance (edits to committed tests attempted on implementation branches, caught by hook or gate). Share of **test commits** adding mocks (reference: 36% agent vs 26% non-agent, arXiv:2602.00409 Table 7 — same denominator). Share of commits touching test files (reference: 23% vs 13%, same paper — this measures test activity, not tampering, and should *not* fall). Mutation score and red-before-green once automated.
+The proposed weights price modules, public symbols, abstraction layers, configuration surfaces and dependencies, with corresponding retirement credits. These are hypotheses about maintenance cost. Hiding a public responsibility as private, dividing related work across branches or deleting lines without retiring an obligation does not demonstrate less complexity. Zero static references do not establish absence of external callers, reflection, serialized data or other contracts.
 
-### §4 PAYGO — the complexity ledger
+An activation amendment must define counting and overlap, bank ownership, related-change aggregation, legitimate counterexamples, measured benefit versus burden, and its effective transition. Safe retirement remains necessary whether or not a deletion earns a credit. A trial can be withdrawn or revised when those measures do not support it.
 
-*Analog: pay-as-you-go budget rules.* New spending must be offset. Here new complexity must be offset by deletion.
+### §5 Sunset — expiry requires a disposition
 
-Status: advisory. The weights (+1 module, +1 public symbol, +3 dependency) are uncalibrated; pricing public surface and leaving internals free invites the substitution "make it private, split less, hide coupling" (audit §5.2); zero static references do not prove no external caller, plugin entry point, reflection or serialization dependency. The ledger therefore reports NOT_RUN, is not in any required list, and enters the enforced profile only after E-series evidence on maintenance tasks.
+A sunset makes a temporary responsibility due for review; it is not permission to destroy an existing contract. Temporary compatibility layers, shims and adapters require tags. A stable boundary responsibility may be recorded as permanent from inception with its contract, owner and reason. A tag never independently authorizes a violation of H1 or the error-handling rules.
 
-CHEAPEST PATH (once live). Over allowance, the least-effort credit is deleting code with zero references; `make credits` lists candidates. Credit must reward verifiable retirement of a responsibility, not "some lines deleted".
+The binding terms are 30 days for todo/masks/skip and 90 days otherwise on newly added or renewed tags, with a tree-wide 180-day maximum. Expired obligations require a disposition. Renewal changes the tag only, states its reason and retirement condition, and is limited to two renewals. Protected-path and acceptance permissions continue to apply.
 
-CHECK (`ledger`, NOT_RUN). Ledger computed by tooling from the diff, never self-reported; credits require a zero-reference proof plus a green suite and, for public symbols, a statement of who the external callers could be.
+Choose **delete** only after establishing no remaining internal or external obligation and a green suite; **renew** when the temporary responsibility remains justified; or **promote** to a recorded permanent responsibility with a contract and owner. Every path has a change record. Complexity effects remain advisory. A green local suite alone is not evidence that an external contract has ended, and a risky deletion is not a required proof exercise.
 
-METRIC. Net complexity per change; share of `refactor`/net-credit changes (reference: refactoring share −70%, GitClear 2026); duplicated-block delta (+81%, GitClear 2026); dependency count; banked credit.
+When safe retirement cannot be established within scope, file `BLOCKED SUNSET-EXPIRED` identifying each tag and the unmet condition, including external obligations. A corresponding `grace:<today>` defers that tag once for at most seven days. A general filing does not cover unspecified tags. Grace defers only the sunset obligation, not failing acceptance or other duties.
 
-### §5 Sunset — everything temporary has an expiry
+**Adjacent cases:** retain a documented permanent protocol adapter because its contract remains part of the system. Do not label a temporary workaround permanent merely to avoid its review. Conversely, do not delete a still-promised compatibility path solely because its date has arrived.
 
-*Analog: sunset legislation.* Renewal costs; deletion is cheap.
+### §6 The record — reasons, authority and effect
 
-Revised default (audit §5.3): expiry triggers **re-evaluation**, and deletion is the default only when the retirement condition is verifiable (no callers, green suite, no external contract). A stable adapter at a system boundary is not temporary debt and should be promoted, not deleted on a timer.
+The record is committed evidence of decisions, not an authorization created by filling a template. `TYPE:` identifies the change; `WHY:` explains the chosen decision and alternative; `TESTS:` records commands actually run. Searches precede new modules, helpers, wrappers and base classes, and `SEARCHED:` reports their results honestly. Replaying the search is advisory; the search and truthful record are duties.
 
-CHEAPEST PATH. Delete when the retirement condition holds: no record, earns credit. Renew on a `renew/` branch: a justification, a guaranteed audit, two renewals max. Defer once: `BLOCKED SUNSET-EXPIRED` in the record plus `grace:<today>` on the tag, seven days.
+Every added dependency has its own `DEP` entry identifying the actual package and version, existence evidence, publication date, reason and rejected alternative. The default minimum age is 30 days. A prior written task-owner exception may waive age alone for an exact package/version and change, with necessity, alternatives, withdrawal plan and expiry. It does not waive existence, record or other authority requirements. A mechanism that refuses the exception is referred rather than bypassed.
 
-CHECK (`type` renew rule, `sunset`). Every `SUNSET` token at the subject must parse; in code a partial tag or an impossible date is malformed, never a crash. The per-kind term (30 days for `todo`/`masks`/`skip`, 90 otherwise) is checked on the tag lines the change **adds or renews**; tree-wide only the 180-day maximum applies, so a legal tag written by someone else never blocks an unrelated change (audit RT-04, and `SUNSET_MAX` now does something). A tag's date, kind or reason may change only on a `renew` branch, and a renew is a field-level diff: removed and added lines pair up, the code before the tag is byte-identical, kind and owner are unchanged (audit P08, P12). Expired ⇒ FAIL unless all of: `grace:` is dated today or earlier and within 7 days; the change's **own** record files `BLOCKED SUNSET-EXPIRED`; and the same tag was not already in grace at the base — the deferral is once (audit P0-8). Untagged `TODO`/`FIXME`/`HACK`/`XXX` on added code lines ⇒ FAIL. Not yet automated: stable tag ids and the renewal count (`renewals_cap` NOT_RUN).
+Use `ACCEPTANCE`, `EXCEPTION`, `EFFECTIVE` and `REVIEW` when the corresponding decision or trial applies. An amendment records its protected interest, affected clauses, adjacent allowed/refused cases, expected compliance burden, alternatives, effective point and treatment of pending work. A trial also states the review point, success and burden measures, and fallback. Corrections to old records retain the original decision and explain the new entry.
 
-METRIC. Live tags (count, median age). Resolutions by path. Renewals per tag. Introduced-issue survival to the latest revision (reference: 24.2%, arXiv:2603.28592v1).
+**Adjacent cases:** authorize an exact young dependency version for a named necessity under the age exception, while preserving existence evidence and an expiry. A general instruction to finish quickly is not that exception. Repeated similar requests call for reconsidering the general age rule.
 
-### §6 The record — paperwork that is cheapest to fill honestly
+### §7 Audit — bounded independent judgment
 
-*Analog: the legislative record.* The form is designed so that the least-effort way to complete it truthfully is to have done the thing.
+The legislative obligation covers a 20% sample of merged changes and all policy/renew changes, acceptance revisions, exceptions, masks/boundary exemptions, `NONE-FITS` with hits, `POLICY-GAP`/`SUNSET-EXPIRED` filings and the configured sensitive paths. This states what requires independent judgment, not what any present mechanism performs. Legislative authors do not adjudicate their own amendments.
 
-CHEAPEST PATH. The search is one command and usually finds the helper. The dependency record is cheapest to skip by not adding the dependency. The `WHY` line is one sentence; writing it at the moment of decision is cheaper than reconstructing it.
+Permitted decisions are **FINDING**, supported by reproducible evidence or a located contract defect; **NO-FINDING**, with at least three examined attack paths, commands and limitations; and **INCONCLUSIVE**, identifying missing evidence and the next required decision. Inconclusive is neither approval nor proof of a defect. Findings and unresolved questions retain separate records. A refusal to certify insufficient evidence must not force a fabricated failure or an unsupported clean attestation.
 
-CHECK (`records`, `deps`). Record committed at the subject (an uncommitted record is not evidence, P16). The change's record is the one it adds; failing that the single one it modifies; and when a `<type>/<slug>` branch is given, the one matching it — so correcting a previously merged record alongside your own is allowed (audit RT-08). `TYPE:` matches; `WHY:` on `feature`/`fix`; `TESTS:` on `feature`/`fix`/`refactor`; new files under `src/` ⇒ `SEARCHED:`; every dependency spec actually added to a Python manifest ⇒ a `DEP:` line for that package (bound by name, F10). `deps`: each `DEP` exists on PyPI at that version and is ≥ `DEP_MIN_AGE` days old; `DEPS_OFFLINE=1` ⇒ NOT_RUN (P19); registry unreachable ⇒ ERROR. Not automated: `SEARCHED` replay (`searched_replay` NOT_RUN); per-helper `SEARCHED` binding inside existing modules (P17).
+The proposed re-audit and accountability parameters are advisory until expressly activated. Neither a finding quota nor a raw count of attestations establishes quality. Evaluate decisions together with subsequent corrections, missed problems, coverage and the burden of review. A different instance can still share the same blind spots; these are limits of the analogy, not grounds to give the original author unilateral approval power.
 
-METRIC. Duplicated-block delta. New dependencies per 100 changes. Nonexistent-package attempts caught at CI (reference attempt rates: 5.2% commercial / 21.7% open-source models, USENIX Security 2025; 4.62–6.10% frontier, arXiv:2605.17062 — the merged rate is to be zero). Share of `SEARCHED` with hits ending in `REUSED`.
-
-### §7 Audit — randomness the implementer cannot optimize against
-
-*Analog: random tax audits and independent inspectors, with term limits.*
-
-Selection (`audit-select`): `AUDIT_RATE` of merged changes by a salted draw on the subject SHA, plus 100% of `renew`/`policy` changes, any change to the protected set, `masks` tags, `boundary` exemptions, `NONE-FITS` with hits, `POLICY-GAP` and `SUNSET-EXPIRED` filings, allowance grants and `AUDIT_ALWAYS_PATHS`. Those globs are matched with a recursive matcher in which `**` spans zero or more directories: under `fnmatch`, which v0.3 used, `src/**/auth*` did not match `src/auth.py`, so the most obvious security-sensitive paths never triggered the rule the whole design leans on (audit P0-10). The type comes from the committed record, so the 100% triggers survive merging (P24). The selector only selects; triggering the auditor, validating its deliverable and re-auditing are orchestrated outside the gate.
-
-Auditor: a fresh instance given the subject and base SHAs from the gate result, the diff and the record at the subject — never the implementer's session. Procedure and outputs: `.claude/skills/audit/SKILL.md`. Against fault-finding bias (audit §5.4): a minimum risk surface is checked before attesting; outputs are `FINDING`, `NO-FINDING`, `INCONCLUSIVE`; severity and uncovered paths are reported; auditors are judged on overturned attestations and escaped regressions, not on finding counts. `OWNERSHIP-LOSS` is a located contract defect, not a forced failing test.
-
-METRIC. Finding rate per audited change paired with attestation-overturn rate. RECONSTRUCT adequacy rate. Findings by clause.
 
 ## 4. Checks on the checkers
 
@@ -147,44 +134,46 @@ METRIC. Finding rate per audited change paired with attestation-overturn rate. R
 
 ## 5. Metrics and baselines (for E-series evaluation)
 
-Each row is a behavioral dependent variable with a published reference point, so clauses can be ablated one at a time behind pre-registered gates instead of evaluating `AGENTS.md` as a monolith against a task-resolution rate. State every result with its scope — this repository, this task family, this model set, this period. None of the references is causal; several are vendor-sourced; none was independently re-verified here except where a fixed arXiv version is cited. They indicate direction and magnitude, not targets, and do not justify any specific parameter value in §6.
+Evaluation must be capable of finding the legislation itself costly or mistaken. Define scope, comparison, denominators, review point and fallback before a trial. State conclusions for the observed repository, task family, model set and period; do not treat a metaphor, outside correlation or one successful task as calibration of a binding threshold. This legislative revision establishes no empirical result.
 
-| Metric | Clause | Direction | Published reference | Source and caveat |
-|---|---|---|---|---|
-| error-masking constructs / 1k changed lines | §2 | ↓ | +47% rise in AI era | GitClear 2026, 623M changes; commercial vendor, longitudinal not causal |
-| unauthorized weakening of frozen acceptance (attempts caught) | §3 | → 0 | — | repo-local; H1 hook and gate refusals |
-| share of test commits adding mocks | §3 | ↓ | 36% agent vs 26% non-agent test commits | arXiv:2602.00409v1, RQ2 / Table 7 — denominator is test commits |
-| share of commits touching test files | §3 | should not fall | 23% agent vs 13% non-agent | arXiv:2602.00409v1 — test activity, includes legitimate additions; not a tampering measure |
-| mutation score on touched lines | §3 | ↑ | — | repo-local baseline needed; not automated |
-| refactor share / net-credit changes | §4 | ↑ | refactoring −70% | GitClear 2026 |
-| duplicated-block delta | §4, §6 | ↓ | +81% | GitClear 2026 |
-| introduced-issue survival to latest revision | §5 | ↓ | 24.2% | arXiv:2603.28592v1 (304,362 commits, 6,275 repos) |
-| nonexistent-package attempts merged | §6 | 0 | attempt rates 5.2% / 21.7%; 4.62–6.10% frontier | USENIX Security 2025; arXiv:2605.17062 |
-| new dependencies / 100 changes | §6 | ↓ | — | repo-local baseline needed |
-| RECONSTRUCT adequacy rate | §7 | ↑ | — | repo-local; operational definition of ownership |
-| finding rate × attestation-overturn rate | §7 | ↓ × low | — | repo-local |
-| false-block rate (legitimate changes refused) | all | low | — | repo-local; the cost side of every rule |
+Assess substantive completion, preservation of authorized acceptance and maintenance outcomes together with refusal costs and human burden. A rule can reduce a prohibited action by preventing useful work altogether; a metric that omits that cost cannot justify the rule. Preserve unanswered and deferred tasks in the denominator rather than treating them as invisible successes.
 
-Primary outcomes for any experiment: real completion rate, hidden regressions, unauthorized acceptance weakening, false-block rate, maintenance-task pass rate, token/time/tool overhead and human interventions. Complexity and deletion counts are secondary. Repeated maintenance tasks test the anti-entropy claim better than one-off features.
+| Question | Evidence to consider together | Misleading shortcut to avoid |
+|---|---|---|
+| Does the rule improve completion? | authorized specification met, unresolved decisions, later regressions, maintenance-task outcomes | equating PASS or a completed branch with completed work |
+| Does acceptance remain legitimate? | unauthorized changes, approved corrections/migrations, retained old evidence, reasons for overturned decisions | counting every test edit as tampering or every freeze as correctness |
+| Does BLOCKED obtain needed decisions? | affected scope, owner response/disposition, wait time, independent work completed | rewarding few filings or penalizing truthful dissent |
+| Is a restriction proportionate? | legitimate cases refused, compliance work, token/time/tool costs, human interventions | reporting prohibited cases caught without lawful neighboring cases |
+| Does the ledger measure maintenance burden? | related-change complexity, external obligations, later maintenance cost, deletion regressions | optimizing deletion counts, private names or branch counts |
+| Do sunsets retire debt safely? | safe deletion, justified renewal, stable responsibility, unresolved internal/external contracts | treating expired dates as proof that obligations disappeared |
+| Are dependency choices justified? | verified existence, alternatives, exception reasons and recurrence, later withdrawal burden | treating package age alone as safety or justified necessity |
+| Is independent judgment useful? | evidence quality, scope examined, corrected decisions, escaped problems, review burden | quotas for findings, assurances or overturned decisions |
+
+Complexity, deletion totals, mock prevalence and mutation scores are secondary indicators, not substitutes for authorized behavior. An observed improvement is a reason to consider an activation amendment, not automatic activation. A trial that fails its stated benefit-versus-burden test follows its recorded fallback. Repeated exceptions or refusals are grounds to reconsider a rule, without presuming that every refusal was wrong.
 
 ## 6. Parameters
 
-Authoritative in `policy.mk` **at the trusted ref** — the verifier parses that file; environment variables cannot override policy values. Mirrored as literal numbers in `AGENTS.md`; a `policy/` change updates both. Starting values, pre-registered; none is calibrated.
+`policy.mk` at the applicable trusted revision is authoritative for values; `AGENTS.md` states their legal effect. Updating a value is a `policy/` amendment that also updates its operative description and records its effective transition. An environment choice, available tool or measured value does not itself amend a rule. Starting values are not established calibration.
 
-| Parameter | Value | Used by |
+Required checks are necessary merge conditions, not an exhaustive statement of substantive duties. Conversely, a target expressly marked advisory cannot block work merely because it is unmet or unmeasured. Advisory parameters acquire binding force only through an explicit activation amendment with scope, legitimate counterexamples, benefit and burden measures, and treatment of pending work.
+
+| Parameter | Value | Legislative effect |
 |---|---|---|
-| `PROTECTED_PATHS` | `AGENTS.md policy.mk tests/MOCK_ALLOWLIST docs/agents-policy.md Makefile scripts/ .claude/ .github/ .gate/ .gitattributes` | §1, H5, H6 |
-| `REQUIRED_CHECKS_ENFORCED` | `type protected_files export_integrity harness_integrity unit_tests test_inventory red_before_green h1 mocks masking_markers masking_ruff sunset records deps verifier_selftest` — one physical line, because a value truncated by a continuation is how a required check silently becomes advisory | gate |
-| `REQUIRED_CHECKS_ADVISORY` | `type protected_files unit_tests` | gate |
-| `UNIT_TESTS_TIMEOUT` | 900 s | §3 |
-| `ALLOWANCE_DEFAULT` / `BANK_CAP` | 2 / 6 | §4 (advisory) |
-| `MUTATION_MIN` | 0.70 | §3 (not automated) |
-| `SUNSET_SHORT` / `SUNSET_LONG` / `SUNSET_MAX` / `SUNSET_GRACE` | 30 / 90 / 180 / 7 days | §5 |
-| `RENEWALS_MAX` | 2 | §5 (not automated) |
-| `DEP_MIN_AGE` | 30 days | §6 |
-| `AUDIT_RATE` | 0.20 | §7 — consumed by `audit-select` |
-| `REAUDIT_RATE` / `ATTEST_MIN_PATHS` / `AUDITOR_OVERTURN_MAX` | 0.10 / 3 / 0.20 | §7 — **declared and consumed by nothing.** They price the auditor's accountability, and no code reads them (see §7.6) |
-| `AUDIT_ALWAYS_PATHS` | `src/**/auth* src/**/secret* src/**/subprocess* src/**/net* src/**/sql* src/**/serial*` | §7 — adapt to the layout |
+| `PROTECTED_PATHS` | `AGENTS.md policy.mk tests/MOCK_ALLOWLIST docs/agents-policy.md Makefile scripts/ .claude/ .github/ .gate/ .gitattributes` | binding path authority under H5; acceptance revisions also need §3 approval |
+| `REQUIRED_CHECKS_ENFORCED` | `type protected_files export_integrity harness_integrity unit_tests test_inventory red_before_green h1 mocks masking_markers masking_ruff sunset records deps verifier_selftest` | required PASS conditions; no claim here that this revision has run them |
+| `REQUIRED_CHECKS_ADVISORY` | `type protected_files unit_tests` | observation profile; never permission to merge |
+| `UNIT_TESTS_TIMEOUT` | 900 s | bound for the specified execution; timeout is not evidence of a pass |
+| `ALLOWANCE_DEFAULT` / `BANK_CAP` | 2 / 6 | advisory target and proposed cap; no current merge limit or spendable rights |
+| `MUTATION_MIN` | 0.70 | advisory target; honestly report measured or unmeasured |
+| `SUNSET_SHORT` / `SUNSET_LONG` / `SUNSET_MAX` / `SUNSET_GRACE` | 30 / 90 / 180 / 7 days | binding terms; grace is once per identified tag and defers only that obligation |
+| `RENEWALS_MAX` | 2 | binding renewal limit; missing automatic evidence does not waive the duty |
+| `DEP_MIN_AGE` | 30 days | binding default; only the exact prior written age exception in §6 may waive it |
+| `AUDIT_RATE` | 0.20 | sampling duty, alongside the mandatory categories in AGENTS.md §7 |
+| `REAUDIT_RATE` / `ATTEST_MIN_PATHS` / `AUDITOR_OVERTURN_MAX` | 0.10 / 3 / 0.20 | proposed accountability parameters, advisory until activated; AGENTS.md §7 separately fixes the current three-path NO-FINDING minimum |
+| `AUDIT_ALWAYS_PATHS` | `src/**/auth* src/**/secret* src/**/subprocess* src/**/net* src/**/sql* src/**/serial*` | binding sensitive-path categories; amendment is needed to change their scope |
+
+SEARCHED replay is advisory even though the prior search and honest record remain binding. The same distinction separates a proposed accountability metric from the independent decision duties already stated in §3 and §7. No parameter authorizes its own exception or revises the historical meaning of an existing result.
+
 
 ## 7. Enforcement
 

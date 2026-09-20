@@ -18,7 +18,9 @@ REQUIRED_CHECKS_ADVISORY ?= type protected_files unit_tests
 
 UNIT_TESTS_TIMEOUT   ?= 900
 
-# ---- ledger (advisory until the ledger tool exists) ----
+# ---- legislative status: advisory until an explicit policy amendment activates it ----
+# Tool availability does not activate these targets. They cannot independently refuse a change.
+# Activation must define counting, overlap, bank ownership, related changes and benefit versus burden.
 ALLOWANCE_DEFAULT    ?= 2
 BANK_CAP             ?= 6
 MUTATION_MIN         ?= 0.70
@@ -30,11 +32,14 @@ SUNSET_MAX           ?= 180
 SUNSET_GRACE         ?= 7
 RENEWALS_MAX         ?= 2
 
-# ---- dependencies ----
+# ---- dependencies: default age; exact-version exceptions require AGENTS.md §6 authorization ----
+# A legislative exception does not relabel or bypass a required check's refusal.
 DEP_MIN_AGE          ?= 30
 
 # ---- audit ----
 AUDIT_RATE           ?= 0.20
+# Accountability targets are advisory. AGENTS.md §7 separately binds the evidence required for
+# NO-FINDING; these parameters do not establish that an independent assessment occurred.
 REAUDIT_RATE         ?= 0.10
 ATTEST_MIN_PATHS     ?= 3
 AUDITOR_OVERTURN_MAX ?= 0.20
