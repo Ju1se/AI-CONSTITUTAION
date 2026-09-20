@@ -1,0 +1,61 @@
+# The merge gate, run by CI from the TRUSTED verifier. The candidate never judges itself:
+# scripts/gate_checks.py is extracted from the base branch (main), not from the pull request,
+# and the verifier reads policy.mk / tests/MOCK_ALLOWLIST from main too. A PR that edits the verifier or
+# the policy is therefore judged by the current law; its own version takes effect only after it merges.
+#
+# This file is in the protected set (policy/ branches only, CODEOWNERS review). It is not, by itself, the
+# trust anchor: for a `pull_request` event GitHub evaluates the workflow definition from the PR's own ref,
+# so a PR could rewrite this job. What actually anchors the chain is branch protection on main — required
+# CODEOWNERS review plus this required status check — which lives in repository settings, outside the repo.
+name: gate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0          # full history: the gate walks base..subject commit by commit
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the tools the required checks need
+        run: python -m pip install --quiet ruff pytest
+
+      # fetch-depth: 0 already brought origin/main with its full ancestry. Never add a shallow depth
+      # limit to this fetch: it marks the repository shallow and truncates main, so `git merge-base`
+      # returns nothing whenever main has advanced past the branch point — the normal case (audit T1).
+      - name: Load the trusted verifier from the base branch
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          mkdir -p "$RUNNER_TEMP/verifier"
+          git archive --format=tar origin/main scripts/gate_checks.py | tar -xf - -C "$RUNNER_TEMP/verifier"
+
+      - name: Gate the candidate
+        env:
+          SUBJECT: ${{ github.event.pull_request.head.sha }}
+          BRANCH: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          BASE=$(git merge-base origin/main "$SUBJECT")
+          test -n "$BASE"
+          python "$RUNNER_TEMP/verifier/scripts/gate_checks.py" gate \
+            --subject "$SUBJECT" --base "$BASE" --policy-ref origin/main \
+            --branch "$BRANCH" --profile enforced --out gate-result.json
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gate-result
+          path: gate-result.json

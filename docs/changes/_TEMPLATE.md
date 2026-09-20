@@ -1,4 +1,4 @@
-# Change record — copy to docs/changes/<type>-<slug>.md and fill in as you go
+# Change record — copy to docs/changes/<type>-<slug>.md, fill in as you go, and COMMIT it with the change (an uncommitted record is not evidence)
 
 TYPE: <feature|fix|refactor|test|chore|renew|policy>
 WHY: <decision> instead of <alternative>, because <one clause>.

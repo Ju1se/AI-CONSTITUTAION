@@ -1,0 +1,14 @@
+# Who must approve what. Replace the placeholders; then in branch protection for `main` require:
+# review from code owners, the `gate` status check, and dismissal of stale approvals on new commits.
+# The protected set (H5) — one owner set, never the implementer role.
+/AGENTS.md             @OWNER
+/policy.mk             @OWNER
+/tests/MOCK_ALLOWLIST  @OWNER
+/docs/agents-policy.md @OWNER
+/Makefile              @OWNER
+/scripts/              @OWNER
+/.claude/              @OWNER
+/.github/              @OWNER
+/.gate/                @OWNER
+# Source needs the verifier role's approval; the implementer role's token must not be able to approve.
+/src/                  @VERIFY-BOT
