@@ -65,9 +65,14 @@ DOC_EXCLUDE = ("AGENTS.md", "docs/agents-policy.md", "docs/changes/", "docs/audi
                "scripts/gate_checks.py", "scripts/tests/", ".claude/skills/")
 
 # pytest hooks that decide what is collected or how a result is reported (audit CR-03).
-HARNESS_HOOKS = ("pytest_runtest_makereport", "pytest_runtest_logreport", "pytest_report_teststatus",
-                 "pytest_runtest_protocol", "pytest_collection_modifyitems", "pytest_ignore_collect",
-                 "pytest_collect_file", "pytest_deselected", "pytest_runtest_setup")
+# Any pytest hook decides what is collected or how a result is reported, so the test is the `pytest_`
+# prefix rather than a list of names. The named forms are kept for the message they produce.
+HARNESS_HOOK_RE = re.compile(r"\bdef\s+(pytest_\w+)")
+# An autouse fixture needs no hook at all: `request.node.add_marker(pytest.mark.xfail(...))` turned a
+# genuinely red suite green and the gate reported 14/14 (audit LM-1). These are the forms that attack
+# reproduced with. Scanning cannot close the class — see the scope line the check prints.
+HARNESS_VERDICT_RE = re.compile(r"\badd_marker\s*\(|\bpytest\.mark\.(xfail|skip)\b"
+                                r"|\b(rep|report)\.outcome\s*=|\bpytest\.(skip|xfail)\s*\(")
 HARNESS_KEYS = ("addopts", "testpaths", "norecursedirs", "python_files", "python_classes",
                 "python_functions")
 HARNESS_SECTION_RE = re.compile(r"^\s*\[\s*(tool\.pytest[^\]]*|tool:pytest|pytest|tool\.ruff[^\]]*)\s*\]")
@@ -279,10 +284,19 @@ def pytest_argv(ctx: Ctx, exp: str, *targets: str, collect_only: bool = False) -
     return args + list(targets)
 
 
+# This run's own identity. `make` puts every command-line variable into the recipe environment, so a
+# gate invoked as `make gate SUBJECT=… BASE=…` would hand those to every process it spawns — including
+# the corpus, whose fixtures start nested gates that would read them as their own inputs and resolve
+# them against a different repository. Stripped, not merely overridden: a nested gate must be told what
+# to judge, never inherit it (audit J-1).
+INHERITED_IDENTITY = ("SUBJECT", "BASE", "BRANCH", "MAIN", "POLICY_REF", "VERIFIER_REF", "GATE_OUT",
+                      "GATE_PROFILE", "PYTEST_ADDOPTS", "PYTEST_PLUGINS")
+
+
 def run_in(ctx: Ctx, exp: str, cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONPATH": exp, "PYTHONDONTWRITEBYTECODE": "1"}
-    env.pop("PYTEST_ADDOPTS", None)
-    env.pop("PYTEST_PLUGINS", None)
+    for name in INHERITED_IDENTITY:
+        env.pop(name, None)
     return subprocess.run(cmd, cwd=exp, env=env, capture_output=True, text=True, timeout=timeout)
 
 
@@ -445,8 +459,17 @@ def is_frozen_test(path: str) -> bool:
     return under(path, "tests/") or under(path, "scripts/tests/") or is_conftest(path)
 
 
+PLACEHOLDER_RE = re.compile(r"<[^<>]{0,60}>")
+
+
 def is_placeholder(value: str) -> bool:
-    return not value or "<" in value
+    """An unfilled template slot, not any line that happens to contain a `<`.
+
+    The old test was `"<" in value`, which refused a truthful record whose WHY carried a bound such as
+    `n <= 3` and reprinted the template line without naming the cause (audit LM-8). A placeholder is an
+    angle-bracket token; a comparison is not.
+    """
+    return not value or bool(PLACEHOLDER_RE.search(value))
 
 
 def code_part(line: str) -> str:
@@ -463,7 +486,8 @@ def strip_grace(line: str) -> str:
 def parse_record(text: str) -> dict[str, list[str]]:
     rec: dict[str, list[str]] = {}
     for line in text.splitlines():
-        m = re.match(r"^(TYPE|WHY|SEARCHED|DEP|TESTS|ALLOWANCE|BLOCKED)\b\s*(.*)$", line.strip())
+        m = re.match(r"^(TYPE|WHY|SEARCHED|DEP|TESTS|ALLOWANCE|BLOCKED|ACCEPTANCE|EXCEPTION|EFFECTIVE"
+                     r"|READ|HANDOFF)\b\s*(.*)$", line.strip())
         if m:
             rec.setdefault(m.group(1), []).append(m.group(2).lstrip(": ").strip())
     return rec
@@ -647,8 +671,11 @@ def check_export_integrity(ctx: Ctx) -> Check:
 def check_harness_integrity(ctx: Ctx) -> Check:
     """The candidate must not ship the configuration that decides how it is judged (CR-01, CR-02, CR-03)."""
     c = Check("harness_integrity", "harness_integrity" in ctx.required, "PASS")
-    scope = ("scope: a conftest.py that subverts reporting without one of the listed hooks (an autouse fixture, "
-             "say) is not detected; the audit BREAK step is the compensating control")
+    scope = ("scope: a denylist over added lines — any pytest hook in a conftest, the marker and outcome "
+             "forms an autouse fixture uses, harness config sections and keys, export-ignore, file-level "
+             "lint suppression. It cannot close the class. The gate runs code the candidate wrote, so a "
+             "conftest or an imported module reaching the verdict by a route no pattern anticipates is "
+             "not detected here; the audit BREAK step is the compensating control")
     if ctx.type == "policy":
         c.detail.append("policy change: the harness files are the protected set's business")
         c.detail.append(scope)
@@ -659,10 +686,12 @@ def check_harness_integrity(ctx: Ctx) -> Check:
         if os.path.basename(path) == ".gitattributes" and "export-ignore" in text:
             bad.append(f"{path}:{no}: export-ignore removes files from the gate's own evidence: {stripped[:70]}")
         if is_conftest(path):
-            for hook in HARNESS_HOOKS:
-                if re.search(rf"\bdef\s+{hook}\b", text):
-                    bad.append(f"{path}:{no}: defines the pytest hook {hook}, which decides what is collected "
-                               f"or how a result is reported")
+            hook = HARNESS_HOOK_RE.search(text)
+            if hook:
+                bad.append(f"{path}:{no}: defines the pytest hook {hook.group(1)}, which decides what is "
+                           f"collected or how a result is reported")
+            elif HARNESS_VERDICT_RE.search(text):
+                bad.append(f"{path}:{no}: changes a test's verdict from inside the run: {stripped[:70]}")
         if path.endswith((".ini", ".cfg", ".toml")):
             m = HARNESS_SECTION_RE.match(text)
             if m:
@@ -787,7 +816,17 @@ def check_h1(ctx: Ctx) -> Check:
     if ctx.type is None:
         c.outcome, c.detail = "FAIL", ["change type unresolved (see type)"]
         return c
-    if ctx.type != "test":
+    # Acceptance is revised in one of two forums and never silently. A `test` change adjudicates ordinary
+    # acceptance; a `policy` change is the only forum for protected acceptance — `scripts/tests/`, the
+    # verifier's own counterexamples. Either way the decision §3 requires must be in the record. The
+    # exemption used to be unconditional for `test` and absent for `policy`, so the gate reported "no
+    # committed test modified" while assertions were deleted (audit LM-2) and no branch type could revise
+    # a counterexample at all (audit LM-3). A revision on `policy` is safe to allow because
+    # verifier_selftest restores the corpus from the policy ref: the change is still judged by the
+    # counterexamples as they stand on main, and its own revision takes effect only once merged.
+    revision = [a for a in ctx.record.get("ACCEPTANCE", []) if not is_placeholder(a)]
+    exempt = ctx.type in ("test", "policy") and bool(revision)
+    if not exempt:
         frozen = []
         for commit in commits_in_range(ctx):
             for status, path in commit_files(ctx, commit):
@@ -796,8 +835,16 @@ def check_h1(ctx: Ctx) -> Check:
         if frozen:
             c.outcome = "FAIL"
             c.detail = ["H1: a committed test may not be modified, deleted or renamed:"] + frozen
-            c.safe_path = ("file BLOCKED TEST-DEFECT (3 lines); a test/ branch adjudicates. New assertions go in a "
-                           "new test file. The frozen set is tests/, scripts/tests/ and every conftest.py")
+            if ctx.type in ("test", "policy"):
+                c.safe_path = (f"a {ctx.type} change may revise committed acceptance only with the decision §3 "
+                               "requires: an ACCEPTANCE: line in the record naming the approver the owner "
+                               "designated before the edit, the reason, the exact old and new cases, and the "
+                               "retained evidence. Protected acceptance (scripts/tests/) goes on policy/, "
+                               "ordinary acceptance on test/")
+            else:
+                c.safe_path = ("file BLOCKED TEST-DEFECT (3 lines); a test/ branch adjudicates with a recorded "
+                               "ACCEPTANCE: decision. New assertions go in a new test file. The frozen set is "
+                               "tests/, scripts/tests/ and every conftest.py")
             return c
     if ctx.type == "refactor":
         touched = changed_files(ctx, "AMD", "tests/")
@@ -816,7 +863,12 @@ def check_h1(ctx: Ctx) -> Check:
             c.outcome, c.detail = "FAIL", ["H1/BLIND: tests are committed before the implementation:"] + mixed
             c.safe_path = "commit tests first (git add tests && git commit -m 'test: <what>'), then implement"
             return c
-    c.detail.append("no committed test modified; src and tests never share a commit")
+    if exempt:
+        c.detail += ["acceptance revised under a recorded decision — in the 100% audit set:"] + revision
+        c.detail.append("scope: the gate reads that a decision was recorded; whether the named approver was "
+                        "independent of the proposer is for the audit, not for a check")
+    else:
+        c.detail.append("no committed test modified; src and tests never share a commit")
     c.detail.append("scope: commit order is a proxy — red_before_green carries the parent-commit evidence")
     return c
 
@@ -1525,6 +1577,10 @@ def cmd_audit_select(args: argparse.Namespace) -> int:
             reasons.append("POLICY-GAP or SUNSET-EXPIRED filing in the record")
         if ctx.record.get("ALLOWANCE"):
             reasons.append("allowance grant")
+        if any(not is_placeholder(a) for a in ctx.record.get("ACCEPTANCE", [])):
+            reasons.append("acceptance revision")
+        if any(not is_placeholder(e) for e in ctx.record.get("EXCEPTION", [])):
+            reasons.append("recorded exception")
         for s in ctx.record.get("SEARCHED", []):
             m = re.search(r"→\s*(\d+)\s+hits?", s)
             if "NONE-FITS" in s and m and int(m.group(1)) > 0:

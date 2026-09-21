@@ -74,10 +74,20 @@ if [ "${rel#src/}" != "$rel" ]; then
 Safe path: git add tests && git commit -m 'test: <what the tests pin down>' — then edit src/."
   fi
 elif is_test_file "$rel"; then
-  if [ "$type" != "test" ] && git cat-file -e "HEAD:$rel" 2>/dev/null; then
+  # Two forums may revise committed acceptance, and the gate checks that the §3 decision is in the
+  # record: `test` for ordinary acceptance, `policy` for the protected corpus under scripts/tests/.
+  # The hook cannot read the record, so it steps aside for those two and lets the gate decide. It is
+  # fast feedback; over-refusing a lawful route is worse here than under-refusing one the gate catches.
+  forum=no
+  case "$type:$rel" in
+    test:*) forum=yes ;;
+    policy:scripts/tests/*|policy:tests/MOCK_ALLOWLIST) forum=yes ;;
+  esac
+  if [ "$forum" = no ] && git rev-parse --verify --quiet "HEAD:$rel" >/dev/null; then
     refuse "$rel already exists; modifying a committed test is H1.
-Safe path: if the test is wrong, file BLOCKED TEST-DEFECT (3 lines) and a test/ branch adjudicates.
-If you need a new test, create a new file under tests/ instead."
+Safe path: if the test is wrong, file BLOCKED TEST-DEFECT (3 lines) and a test/ branch adjudicates with
+an ACCEPTANCE: line in its record. Protected acceptance under scripts/tests/ is revised on policy/, with
+the same recorded decision. If you need a new test, create a new file instead."
   fi
 fi
 
