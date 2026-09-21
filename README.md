@@ -90,20 +90,30 @@ What the experiment actually measured, with two runs agreeing in each direction:
 Two rules have a measured behavioural effect: `h1` and `sunset`. The rest are uncalibrated in both
 directions, and no false-block rate has ever been measured on real work.
 
-### Known unfixed defects
+### What the third audit found, and what happened to it
 
-Confirmed by independent reproduction, with controls, and not yet repaired:
+The audit of the two amendments raised twenty findings against the machinery. Four were confirmed by
+independent reproduction with controls, and all four are now closed:
 
-- A `tests/conftest.py` **added** by a change, with an autouse fixture that marks tests xfail, makes a
-  genuinely red suite report PASS and the change merge-eligible. The frozen-test rule looks only at modified
-  and deleted files; the harness denylist covers named hooks, not fixtures.
-- A change whose record declares `TYPE: test` disables the frozen-test rule entirely. Assertions can be
-  deleted from a committed test with no approval of any kind.
-- Any record value containing an ASCII `<` is treated as an unfilled template placeholder, so a truthful
-  `WHY:` containing a bound such as `n <= 3` is refused with a message that never names the cause.
-- Following the audit procedure's own recheck command produces a false `verifier_selftest` failure on every
-  policy change, because `make` exports command-line variables into the recipe environment and the corpus
-  spawns nested gates that read them.
+- `run_in` strips the run's own identity — `SUBJECT`, `BASE`, `BRANCH`, `POLICY_REF`, `GATE_OUT` and the
+  rest — from every process the gate spawns, so a nested gate must be told what to judge. Following the
+  audit procedure's recheck command no longer fabricates a `verifier_selftest` failure on policy changes.
+- `TYPE: test` no longer disables the frozen-test rule. The exemption is conditional on an `ACCEPTANCE:`
+  line, and such a change lands in the 100% audit set.
+- A placeholder is an angle-bracket token, not any `<`, so a truthful `WHY:` carrying a bound such as
+  `n <= 3` is accepted.
+- `harness_integrity` refuses any pytest hook in a conftest, plus the marker and outcome forms the
+  reproduced autouse attack used.
+
+Two remain open and are stated as such:
+
+- **LM-1 is closed for the form reproduced, not for the class.** The gate runs code the candidate wrote;
+  a conftest or an imported module can still reach the verdict by a route no pattern anticipates. Closing
+  the class needs the acceptance that judges a change to come from the trusted ref.
+- **LM-4** — harness policy outside `PROTECTED_PATHS` (`pyproject.toml` sections, a root `conftest.py`) is
+  refused on every branch type, each check's safe path naming the route the other closes.
+- **LM-5** — every "independent approval" clause is honour-based. The gate can read that a decision was
+  recorded; it cannot read that the approver was independent.
 
 `docs/agents-policy.md` §7.5 and §7.6 state what the gate does not claim, including the residue that no
 arrangement of checks removes: the gate runs code the candidate wrote.
@@ -121,13 +131,14 @@ arrangement of checks removes: the gate runs code the candidate wrote.
 They are unmerged because their own records say they must be. The legislative record's effective clause
 reads "After independent approval and adoption on main"; the judicial record says the amendment "requires
 independent acceptance … Its author and the agents assisting its drafting do not approve it." No such
-approval has been recorded, and the repository has no field in which one could be — which is itself a
-finding in the third audit.
+approval has been recorded.
 
-Merging them now would also enact a constitution whose central new safeguard the machinery does not
-implement: the new §3 requires a designated approver before a frozen acceptance may be revised, and the
-verifier does not parse the field that would record one. The gate would report that safeguard as satisfied
-when nothing checks it.
+The other blocker is now gone. Until the change above, merging them would have enacted a constitution
+whose central new safeguard the machinery did not implement: the new §3 requires a designated approver
+before a frozen acceptance may be revised, and the verifier did not parse the field that would record
+one. It now parses all five new fields and enforces the condition. What it still cannot check is whether
+the approver was independent, which is LM-5 above — so adoption remains a human decision, not a gate
+verdict.
 
 `chore/executive-delivery` additionally cannot pass the gate as it stands, because it sits on top of both
 policy branches and its diff against `main` therefore contains them. It needs rebasing onto `main` first.
