@@ -49,6 +49,10 @@ class Repo:
         self.path = Path(path)
         self.path.mkdir(parents=True, exist_ok=True)
         self.env = {**os.environ, **GIT_ENV}
+        # Work-tree paths the harness itself writes (verifier copies, gate results). commit() leaves them
+        # unstaged, so a test that commits after a gate run does not put the harness's own outputs into
+        # the change under judgment. A path the test writes itself is the test's content and leaves the set.
+        self._harness_paths: set[str] = set()
         self.git("init", "-q", "-b", "main")
         for rel in KIT_FILES + (SELFTEST_FILES if with_selftests else []):
             self.copy_from_kit(rel)
@@ -72,6 +76,7 @@ class Repo:
         shutil.copy(KIT / rel, dst)
 
     def write(self, rel: str, content: str) -> None:
+        self._harness_paths.discard(Path(rel).as_posix())
         p = self.path / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
@@ -87,11 +92,20 @@ class Repo:
 
     def commit(self, msg: str) -> str:
         self.git("add", "-A")
+        own = sorted(rel for rel in self._harness_paths if (self.path / rel).exists())
+        if own:  # literal: a gate out= may hold glob characters that would match a test-written path
+            self.git("--literal-pathspecs", "reset", "-q", "--", *own)
         self.git("commit", "-q", "-m", msg, "--allow-empty")
         return self.rev("HEAD")
 
     def rev(self, ref: str = "HEAD") -> str:
         return self.git("rev-parse", ref).stdout.strip()
+
+    def _harness_wrote(self, target: Path) -> None:
+        """Remember a file the harness wrote; one outside the work tree cannot be staged anyway."""
+        root, target = self.path.resolve(), target.resolve()
+        if target.is_relative_to(root):
+            self._harness_paths.add(target.relative_to(root).as_posix())
 
     def branch(self, name: str) -> None:
         self.git("checkout", "-q", "-b", name)
@@ -109,6 +123,7 @@ class Repo:
         out = self.path / ".verifiers" / f"{ref.replace('/', '_')}.py"
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(self.git("show", f"{ref}:scripts/gate_checks.py").stdout, encoding="utf-8")
+        self._harness_wrote(out)
         return out
 
     def run(self, *args: str, verifier: Path | str | None = None,
@@ -122,6 +137,7 @@ class Repo:
              verifier: Path | str | None = None, env: dict | None = None):
         """Run the full gate. Returns (returncode, result dict or None, stdout+stderr)."""
         target = self.path / out
+        self._harness_wrote(target)
         if target.exists():
             target.unlink()
         cmd = ["gate", "--subject", subject, "--base", base, "--policy-ref", policy_ref,
