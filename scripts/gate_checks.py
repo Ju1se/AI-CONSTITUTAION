@@ -254,6 +254,25 @@ def export(ctx: Ctx, sha: str) -> str:
     return d
 
 
+def _corpus_blobs(ctx: Ctx, sha: str) -> dict[str, str]:
+    """scripts/tests/ path -> blob id at a commit: equal ids are equal bytes, so a revision is exact."""
+    out = {}
+    for line in git(ctx.root, "ls-tree", "-r", sha, "--", "scripts/tests/").stdout.splitlines():
+        meta, _, path = line.partition("\t")
+        if path:
+            out[path] = meta.split()[2]
+    return out
+
+
+def _place_corpus(ctx: Ctx, exp: str, sha: str, paths: list[str]) -> None:
+    """Write each path's bytes at a commit into an export, over whatever the export holds there."""
+    for p in paths:
+        dst = os.path.join(exp, p)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        with open(dst, "wb") as fh:
+            fh.write(git(ctx.root, "show", f"{sha}:{p}", binary=True).stdout)
+
+
 def export_paths(root: str) -> set[str]:
     out = set()
     for dirpath, _dirnames, filenames in os.walk(root):
@@ -457,6 +476,11 @@ def is_frozen_test(path: str) -> bool:
     if path == "tests/MOCK_ALLOWLIST":
         return False
     return under(path, "tests/") or under(path, "scripts/tests/") or is_conftest(path)
+
+
+def _is_selftest(path: str) -> bool:
+    """A test module of the verifier's corpus, as opposed to a helper such as _harness.py."""
+    return os.path.basename(path).startswith("test_") and path.endswith(".py")
 
 
 PLACEHOLDER_RE = re.compile(r"<[^<>]{0,60}>")
@@ -823,29 +847,29 @@ def check_h1(ctx: Ctx) -> Check:
     # committed test modified" while assertions were deleted (audit LM-2) and no branch type could revise
     # a counterexample at all (audit LM-3). A revision on `policy` is safe to allow because
     # verifier_selftest restores the corpus from the policy ref: the change is still judged by the
-    # counterexamples as they stand on main, and its own revision takes effect only once merged.
+    # counterexamples as they stand on main, and a revision must also hold on the verifier it ships.
     revision = [a for a in ctx.record.get("ACCEPTANCE", []) if not is_placeholder(a)]
     exempt = ctx.type in ("test", "policy") and bool(revision)
-    if not exempt:
-        frozen = []
-        for commit in commits_in_range(ctx):
-            for status, path in commit_files(ctx, commit):
-                if status in "MDR" and is_frozen_test(path):
-                    frozen.append(f"{commit[:10]}: {status} {path}")
-        if frozen:
-            c.outcome = "FAIL"
-            c.detail = ["H1: a committed test may not be modified, deleted or renamed:"] + frozen
-            if ctx.type in ("test", "policy"):
-                c.safe_path = (f"a {ctx.type} change may revise committed acceptance only with the decision §3 "
-                               "requires: an ACCEPTANCE: line in the record naming the approver the owner "
-                               "designated before the edit, the reason, the exact old and new cases, and the "
-                               "retained evidence. Protected acceptance (scripts/tests/) goes on policy/, "
-                               "ordinary acceptance on test/")
-            else:
-                c.safe_path = ("file BLOCKED TEST-DEFECT (3 lines); a test/ branch adjudicates with a recorded "
-                               "ACCEPTANCE: decision. New assertions go in a new test file. The frozen set is "
-                               "tests/, scripts/tests/ and every conftest.py")
-            return c
+    # The scan runs either way: under the exemption its entries are what the audit compares the decision to.
+    frozen = []
+    for commit in commits_in_range(ctx):
+        for status, path in commit_files(ctx, commit):
+            if status in "MDR" and is_frozen_test(path):
+                frozen.append(f"{commit[:10]}: {status} {path}")
+    if frozen and not exempt:
+        c.outcome = "FAIL"
+        c.detail = ["H1: a committed test may not be modified, deleted or renamed:"] + frozen
+        if ctx.type in ("test", "policy"):
+            c.safe_path = (f"a {ctx.type} change may revise committed acceptance only with the decision §3 "
+                           "requires: an ACCEPTANCE: line in the record naming the approver the owner "
+                           "designated before the edit, the reason, the exact old and new cases, and the "
+                           "retained evidence. Protected acceptance (scripts/tests/) goes on policy/, "
+                           "ordinary acceptance on test/")
+        else:
+            c.safe_path = ("file BLOCKED TEST-DEFECT (3 lines); a test/ branch adjudicates with a recorded "
+                           "ACCEPTANCE: decision. New assertions go in a new test file. The frozen set is "
+                           "tests/, scripts/tests/ and every conftest.py")
+        return c
     if ctx.type == "refactor":
         touched = changed_files(ctx, "AMD", "tests/")
         if touched:
@@ -865,6 +889,8 @@ def check_h1(ctx: Ctx) -> Check:
             return c
     if exempt:
         c.detail += ["acceptance revised under a recorded decision — in the 100% audit set:"] + revision
+        if frozen:
+            c.detail += ["committed tests this change modifies, deletes or renames under that decision:"] + frozen
         c.detail.append("scope: the gate reads that a decision was recorded; whether the named approver was "
                         "independent of the proposer is for the audit, not for a check")
     else:
@@ -1364,45 +1390,85 @@ def check_verifier_selftest(ctx: Ctx) -> Check:
         c.detail = [f"the policy ref {ctx.policy_ref[:10]} has no scripts/tests corpus to judge a verifier "
                     f"change with"]
         return c
+    # Revisions and deletions are this change's own: read from its diff against the base, never from the
+    # policy ref against the subject, where a path main revised, added or deleted after the fork would
+    # show up too. The blobs only place contents and tell a real revision from a no-op one.
+    trusted_blobs = _corpus_blobs(ctx, ctx.policy_ref)
+    subject_blobs = _corpus_blobs(ctx, ctx.subject)
+    own_deleted = set(changed_files(ctx, "D", "scripts/tests/"))
+    own_revised = set(changed_files(ctx, "MTA", "scripts/tests/"))
+    # A deletion never shortens the corpus that judges the change, but it is named, not silently undone.
+    restored = [p for p in trusted if p in own_deleted]
+    restored_note = ([f"absent at the subject and restored for this verdict: {', '.join(restored)}"]
+                     if restored else [])
     # Restore the trusted corpus over whatever the candidate ships: a deleted counterexample still runs.
-    for p in trusted:
-        dst = os.path.join(exp, p)
-        os.makedirs(os.path.dirname(dst), exist_ok=True)
-        with open(dst, "w", encoding="utf-8") as fh:
-            fh.write(show(ctx.root, ctx.policy_ref, p) or "")
+    _place_corpus(ctx, exp, ctx.policy_ref, trusted)
     timeout = policy_int(ctx, "UNIT_TESTS_TIMEOUT")
     try:
         res = run_in(ctx, exp, pytest_argv(ctx, exp, *trusted), timeout)
     except subprocess.TimeoutExpired:
-        c.outcome, c.detail = "ERROR", [f"the trusted corpus exceeded UNIT_TESTS_TIMEOUT={timeout}s"]
+        c.outcome = "ERROR"
+        c.detail = [f"the trusted corpus exceeded UNIT_TESTS_TIMEOUT={timeout}s"] + restored_note
         return c
     outcome, tail = pytest_outcome(res)
     if outcome != "PASS":
         c.outcome = outcome
         c.detail = [f"the candidate verifier fails the corpus at {ctx.policy_ref[:10]} "
-                    f"({len(trusted)} file(s), restored over the candidate's):"] + tail
+                    f"({len(trusted)} file(s), restored over the candidate's):"] + tail + restored_note
         c.safe_path = ("a change to the judge must keep passing the current counterexamples; you may add cases, "
                        "you may not remove them")
         return c
 
+    # Then the counterexamples this change revises, at their subject content. The trusted copy has already
+    # held, so a weakened revision rescues nothing; but a revision that cannot hold on the verifier being
+    # shipped would merge and refuse the next unrelated policy change. Any corpus file can serve a sibling as
+    # a helper (_harness.py, or a test_*.py another test imports from), so every trusted test runs with every
+    # revision in place, and everything else as in the trusted run (deletions stay restored).
+    revised = sorted(p for p in trusted
+                     if p in own_revised and p in subject_blobs and subject_blobs[p] != trusted_blobs[p])
+    targets = [p for p in trusted if _is_selftest(p)] if revised else []
+    if targets:  # never an empty target list: pytest would then collect the whole export
+        _place_corpus(ctx, exp, ctx.subject, revised)
+        try:
+            res1 = run_in(ctx, exp, pytest_argv(ctx, exp, *targets), timeout)
+        except subprocess.TimeoutExpired:
+            c.outcome = "ERROR"
+            c.detail = [f"the revised self-tests exceeded UNIT_TESTS_TIMEOUT={timeout}s"] + restored_note
+            return c
+        # Back to the trusted tree, so the added cases below run exactly as they did before revisions ran.
+        _place_corpus(ctx, exp, ctx.policy_ref, revised)
+        _, tail1 = pytest_outcome(res1)
+        # The trusted run on this same tree has just passed, so the revision is the only cause of a nonzero
+        # exit: FAIL, never ERROR (a collection error included). An emptied revision needs no carve-out: the
+        # other trusted tests still collect, so only a revision that breaks one of them is refused.
+        if res1.returncode != 0:
+            c.outcome = "FAIL"
+            head = (f"the counterexample(s) this change revises do not hold against the candidate verifier: "
+                    f"{', '.join(revised)} ({len(targets)} test file(s) run with the revision in place)")
+            c.detail = [head] + tail1 + restored_note
+            c.safe_path = "a counterexample you revise must hold against the verifier you are shipping"
+            return c
+
     # Then the cases this change adds. Reported apart, because "your new test fails" and "you broke an
     # existing counterexample" are different problems with different remedies.
-    added = sorted({p for p in ls_tree(ctx, ctx.subject) if under(p, "scripts/tests/")} - set(trusted))
-    added = [p for p in added if os.path.basename(p).startswith("test_")]
+    added = sorted(p for p in set(subject_blobs) - set(trusted) if _is_selftest(p))
     if added:
         try:
             res2 = run_in(ctx, exp, pytest_argv(ctx, exp, *added), timeout)
         except subprocess.TimeoutExpired:
-            c.outcome, c.detail = "ERROR", [f"the added self-tests exceeded UNIT_TESTS_TIMEOUT={timeout}s"]
+            c.outcome = "ERROR"
+            c.detail = [f"the added self-tests exceeded UNIT_TESTS_TIMEOUT={timeout}s"] + restored_note
             return c
         outcome2, tail2 = pytest_outcome(res2)
         if outcome2 != "PASS":
             c.outcome = outcome2
-            c.detail = [f"the self-test(s) this change adds do not pass: {', '.join(added)}"] + tail2
+            c.detail = [f"the self-test(s) this change adds do not pass: {', '.join(added)}"] + tail2 + restored_note
             c.safe_path = "a counterexample you add must hold against the verifier you are shipping"
             return c
     c.detail.append(f"the candidate verifier compiles, passes the trusted corpus ({len(trusted)} file(s))"
+                    + (f", holds its {len(revised)} revised file(s)" if revised else "")
                     + (f" and its own {len(added)} added file(s)" if added else ""))
+    c.detail += restored_note
     return c
 
 
